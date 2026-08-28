@@ -20,8 +20,8 @@ from .citations import Citation
 BASE_URL = "https://www.ecfr.gov"
 
 USER_AGENT = (
-    "cfr-mcp/0.1 (+https://github.com/YOURNAME/cfr-mcp) "
-    "unofficial MCP server; contact: YOUR_EMAIL"
+    "cfr-mcp/0.1 (+https://github.com/mccallar/cfr-mcp) "
+    "unofficial MCP server; contact: https://github.com/mccallar/cfr-mcp/issues"
 )
 
 ENDPOINTS = {
