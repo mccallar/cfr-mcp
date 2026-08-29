@@ -87,3 +87,14 @@ exact.
    paragraphs instead of repeating the heading.
 
 All five have regression tests in `tests/`.
+
+## Phase 4 live checks
+
+- `lookup_citation("40 CFR Part 63")` (one of the largest CFR parts): the
+  streaming byte guard aborted the download at 20 MB after 18.1s with
+  "Request a smaller unit — a subpart or a section — or use
+  browse_structure to navigate this part." No multi-hundred-MB download,
+  no dump. ✅
+- `lookup_citation("40 CFR Part 261")` (mid-size, 1.5M chars of text,
+  ~6 MB XML): 1.7s, degraded to an 8,009-char subpart/section outline with
+  per-node sizes. ✅

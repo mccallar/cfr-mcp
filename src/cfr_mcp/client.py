@@ -64,8 +64,10 @@ class ECFRClient:
         *,
         timeout: float = 30.0,
         max_concurrency: int = 4,
+        max_response_bytes: int = 20 * 2**20,
     ) -> None:
         self._cache = cache or Cache()
+        self.max_response_bytes = max_response_bytes
         self._client = httpx.AsyncClient(
             base_url=BASE_URL,
             timeout=timeout,
@@ -100,27 +102,46 @@ class ECFRClient:
         last: Exception | None = None
         for attempt in range(attempts):
             try:
-                async with self._sem:
-                    resp = await self._client.get(path, params=params)
+                async with self._sem, self._client.stream(
+                    "GET", path, params=params
+                ) as resp:
+                    if resp.status_code == 404:
+                        raise ECFRError(
+                            f"Not found: {path}. For versioner routes this "
+                            "usually means the date is not a valid issue date "
+                            "for that title, or the part/section does not "
+                            "exist on that date."
+                        )
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        last = ECFRError(f"HTTP {resp.status_code} from {path}")
+                        resp = None
+                    else:
+                        resp.raise_for_status()
+                        # Stream with a byte cap: some CFR parts are hundreds
+                        # of MB of XML, and no tool output can use that much.
+                        body = bytearray()
+                        async for chunk in resp.aiter_bytes():
+                            body += chunk
+                            if len(body) > self.max_response_bytes:
+                                raise ECFRError(
+                                    f"The response for {path} exceeds "
+                                    f"{self.max_response_bytes // 2**20} MB. "
+                                    "Request a smaller unit — a subpart or a "
+                                    "section — or use browse_structure to "
+                                    "navigate this part."
+                                )
+                        text = body.decode(resp.encoding or "utf-8", "replace")
             except httpx.HTTPError as exc:
                 last = exc
                 await asyncio.sleep(2**attempt)
                 continue
 
-            if resp.status_code == 404:
-                raise ECFRError(
-                    f"Not found: {path}. For versioner routes this usually means "
-                    "the date is not a valid issue date for that title, or the "
-                    "part/section does not exist on that date."
-                )
-            if resp.status_code == 429 or resp.status_code >= 500:
-                last = ECFRError(f"HTTP {resp.status_code} from {path}")
+            if resp is None:  # retryable status
                 await asyncio.sleep(2**attempt)
                 continue
-            resp.raise_for_status()
 
-            self._cache.set(key, resp.text, immutable=immutable)
-            return resp.text
+            self._cache.set(key, text, immutable=immutable)
+            return text
 
         raise ECFRError(f"Failed after {attempts} attempts: {last}")
 
@@ -141,11 +162,19 @@ class ECFRClient:
         data = await self._get_json(ENDPOINTS["titles"])
         for entry in data.get("titles", []):
             if int(entry.get("number", -1)) == title:
+                if entry.get("reserved"):
+                    raise ECFRError(
+                        f"CFR Title {title} is reserved: it exists as a "
+                        "placeholder and contains no regulations."
+                    )
                 date = entry.get("latest_issue_date") or entry.get("up_to_date_as_of")
                 if not date:
                     raise ECFRError(f"No issue date reported for title {title}")
                 return str(date)
         raise ECFRError(f"Unknown CFR title: {title}")
+
+    # The eCFR's point-in-time data begins here; earlier dates always 404.
+    POINT_IN_TIME_FLOOR = dt.date(2017, 1, 3)
 
     async def _resolve_date(self, title: int, date: str | None) -> tuple[str, bool]:
         """Return (date, immutable). Past dates never change, so cache forever."""
@@ -156,6 +185,18 @@ class ECFRClient:
         except ValueError as exc:
             raise ECFRError(f"Date must be YYYY-MM-DD, got {date!r}") from exc
         today = dt.datetime.now(tz=dt.UTC).date()
+        if parsed < self.POINT_IN_TIME_FLOOR:
+            raise ECFRError(
+                f"The eCFR's point-in-time data begins "
+                f"{self.POINT_IN_TIME_FLOOR.isoformat()}; {date} is earlier. "
+                "For older text, consult the annual print CFR editions on "
+                "govinfo.gov."
+            )
+        if parsed > today:
+            raise ECFRError(
+                f"{date} is in the future. Omit the date to get the current "
+                "text (regulations are not published ahead of time)."
+            )
         return date, parsed < today - dt.timedelta(days=1)
 
     # ---------------- public surface ----------------

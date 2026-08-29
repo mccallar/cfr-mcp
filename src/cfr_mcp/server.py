@@ -364,6 +364,25 @@ async def list_agencies(filter: str | None = None) -> str:
 
 
 def main() -> None:
+    import argparse
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        pkg_version = version("cfr-mcp")
+    except PackageNotFoundError:
+        pkg_version = "unknown"
+
+    parser = argparse.ArgumentParser(
+        prog="cfr-mcp",
+        description=(
+            "MCP server for the US Code of Federal Regulations (eCFR). "
+            "Speaks MCP over stdio; point your MCP client at this command."
+        ),
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"cfr-mcp {pkg_version}"
+    )
+    parser.parse_args()
     mcp.run()
 
 
