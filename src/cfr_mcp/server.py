@@ -25,8 +25,19 @@ from .xml_parse import (
     top_level_paragraphs,
 )
 
+
+def _pkg_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("cfr-mcp")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 mcp = MCPServer(
     "cfr",
+    version=_pkg_version(),
     instructions=(
         "Retrieval of US Code of Federal Regulations text via the eCFR API. "
         "Retrieval only: no compliance judgment or legal advice."
@@ -196,7 +207,7 @@ async def where_does_term_appear(query: str, date: str | None = None) -> str:
     """
     try:
         data = await client().counts_hierarchy(
-            query, **({"conditions[date]": date} if date else {})
+            query, **({"date": date} if date else {})
         )
     except ECFRError as exc:
         return f"Lookup failed: {exc}"
@@ -365,12 +376,8 @@ async def list_agencies(filter: str | None = None) -> str:
 
 def main() -> None:
     import argparse
-    from importlib.metadata import PackageNotFoundError, version
 
-    try:
-        pkg_version = version("cfr-mcp")
-    except PackageNotFoundError:
-        pkg_version = "unknown"
+    pkg_version = _pkg_version()
 
     parser = argparse.ArgumentParser(
         prog="cfr-mcp",

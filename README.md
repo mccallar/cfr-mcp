@@ -1,16 +1,27 @@
 # cfr-mcp
 
+[![CI](https://github.com/mccallar/cfr-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mccallar/cfr-mcp/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/cfr-mcp)](https://pypi.org/project/cfr-mcp/)
+
 An MCP server that gives AI assistants access to the **US Code of Federal Regulations**.
 
 Ask "what does 21 CFR 101.9 require?" or "has 40 CFR 261 changed since 2023?" and get
 the actual regulation text, with citations, instead of a plausible-sounding guess.
 
-Unofficial community project. Not affiliated with the Office of the Federal Register,
-NARA, or GPO.
+Unofficial community project. Not affiliated with or endorsed by the Office of the
+Federal Register, NARA, or GPO, and uses no government seals or logos.
 
 ## Install
 
 Requires Python 3.11+. No API key — the eCFR API is open.
+
+Claude Code:
+
+```bash
+claude mcp add cfr -- uvx cfr-mcp
+```
+
+Any other MCP client:
 
 ```json
 {

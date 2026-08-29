@@ -159,6 +159,16 @@ async def test_where_does_term_appear(respx_mock, fresh_client):
 
 
 @respx.mock(base_url=BASE_URL)
+async def test_where_does_term_appear_date_param(respx_mock, fresh_client):
+    route = respx_mock.get("/api/search/v1/counts/hierarchy").respond(
+        text=fixture_text("counts_hierarchy.json")
+    )
+    await where_does_term_appear("asbestos", date="2024-01-01")
+    # Bare `date`, not conditions[date] — the latter 400s on the real API.
+    assert route.calls.last.request.url.params["date"] == "2024-01-01"
+
+
+@respx.mock(base_url=BASE_URL)
 async def test_browse_structure(respx_mock, fresh_client):
     mock_titles(respx_mock)
     respx_mock.get(url__regex=r".*/structure/2026-08-10/title-1\.json").respond(
