@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mccallar/cfr-mcp",
+  "title": "US Code of Federal Regulations",
+  "description": "Look up, search, and track changes to the US Code of Federal Regulations via the eCFR API. Retrieval only; no legal advice.",
+  "repository": {
+    "url": "https://github.com/mccallar/cfr-mcp",
+    "source": "github"
+  },
+  "version": "0.2.2",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "cfr-mcp",
+      "version": "0.2.2",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

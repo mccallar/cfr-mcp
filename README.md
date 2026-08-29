@@ -11,6 +11,12 @@ the actual regulation text, with citations, instead of a plausible-sounding gues
 Unofficial community project. Not affiliated with or endorsed by the Office of the
 Federal Register, NARA, or GPO, and uses no government seals or logos.
 
+Maintained by one person as a personal project and provided as-is (MIT). Issues and
+pull requests are welcome but may not get a quick response. To report a security
+issue, see [SECURITY.md](SECURITY.md).
+
+<!-- mcp-name: io.github.mccallar/cfr-mcp -->
+
 ## Install
 
 Requires Python 3.11+. No API key — the eCFR and Federal Register APIs are open.

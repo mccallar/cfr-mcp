@@ -1,0 +1,33 @@
+name: Bug report
+description: Something the server got wrong or crashed on
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you asked for and what the server did.
+      placeholder: e.g. lookup_citation("21 CFR 101.9(c)") returned an error
+    validations:
+      required: true
+  - type: input
+    id: input
+    attributes:
+      label: Input / citation
+      description: The exact tool call, citation string, or arguments involved.
+      placeholder: 40 CFR 261.4(b)(1)
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `uvx cfr-mcp --version` (or the version you installed).
+    validations:
+      required: false
