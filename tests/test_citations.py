@@ -83,3 +83,17 @@ def test_rejects(raw):
 def test_roundtrip_str():
     for raw in ["21 CFR 101.9", "40 CFR Part 261, Appendix VIII", "40 CFR Part 261, Subpart C"]:
         assert parse(str(parse(raw))) == parse(raw)
+
+
+def test_deep_real_paragraph_nesting_is_allowed():
+    # Six real levels must still parse; the cap only stops pathological trails.
+    assert parse("21 CFR 101.9(c)(2)(i)(A)(1)(i)").paragraphs == (
+        "c", "2", "i", "A", "1", "i",
+    )
+
+
+def test_absurd_paragraph_depth_is_rejected():
+    # A crafted trail like 101.9(c)×200 is a DoS against extract_paragraphs
+    # (quadratic, synchronous on the event loop); reject it at parse time.
+    with pytest.raises(CitationError, match="Too many paragraph levels"):
+        parse("21 CFR 101.9" + "(c)" * 200)

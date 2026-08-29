@@ -122,3 +122,30 @@ All five have regression tests in `tests/`.
 - `compare_versions("40 CFR Part 261", …)`: refused at 1,483,414 chars with
   guidance to compare a section. `compare_versions("40 CFR 261.4(a)", …)`:
   paragraph narrowing works in the diff path too. ✅
+
+## Security audit (2026-08-29)
+
+Dependency CVEs: `pip-audit` on the frozen runtime AND dev dependency sets —
+**no known vulnerabilities**. Key libs current: lxml 6.1.2, httpx 0.28.1,
+mcp 2.1.1, pydantic 2.13.5.
+
+Attack testing at the code surface:
+- **XXE** (local file read `file:///etc/passwd`, SSRF external entity to
+  169.254.169.254): blocked — `parse_xml` uses
+  `resolve_entities=False, no_network=True`. No leak, no fetch. ✅
+- **Billion-laughs** entity-expansion DoS: entities not expanded, output 10
+  chars. ✅
+- **Path/URL injection** via citation (title/part smuggling `../`, `?`, `%2e`,
+  out-of-range titles): all rejected by the citation regex + 1–50 title check;
+  cache keys are SHA256 so params can't traverse. ✅
+- **max_chars abuse** (negative, zero, 1e9): degrades safely, no crash. ✅
+- **ReDoS** on citation regexes: 6 crafted inputs (100k chars, unbalanced
+  parens), all <1ms. ✅
+- **FOUND + FIXED — paragraph-trail DoS.** `extract_paragraphs` is quadratic
+  in trail length and runs synchronously on the asyncio event loop, so one
+  crafted citation stalls every concurrent tool call. `21 CFR 101.9(c)`×80
+  against the real 121k-char section took >5s (×200 ≈ minutes). The citation
+  regex accepted unlimited paragraph groups. Fix: `MAX_PARAGRAPH_DEPTH=12` in
+  `citations._paragraphs` (deepest real CFR nesting is ~6) rejects the input
+  at parse time in 0.0001s; legit 6-level citations still parse. Regression
+  tests in `test_citations.py`. Shipped in 0.2.1.

@@ -24,7 +24,7 @@ BASE_URL = "https://www.ecfr.gov"
 FR_DOCUMENTS_URL = "https://www.federalregister.gov/api/v1/documents.json"
 
 USER_AGENT = (
-    "cfr-mcp/0.2 (+https://github.com/mccallar/cfr-mcp) "
+    "cfr-mcp/0.2.1 (+https://github.com/mccallar/cfr-mcp) "
     "unofficial MCP server; contact: https://github.com/mccallar/cfr-mcp/issues"
 )
 

@@ -110,11 +110,24 @@ _TITLE_ONLY_RE = re.compile(rf"^{_TITLE}{_CFR}\s*$", re.IGNORECASE)
 
 _PARA_RE = re.compile(r"\(([\w]+)\)")
 
+# The deepest paragraph nesting the CFR uses is roughly (a)(1)(i)(A)(1)(i) —
+# six levels. Anything beyond this cap is never a real citation; rejecting it
+# keeps a crafted trail like "101.9(c)(c)(c)…×200" out of extract_paragraphs,
+# whose matching cost is quadratic in the trail length (and runs synchronously
+# on the event loop, so one bad citation would stall every concurrent call).
+MAX_PARAGRAPH_DEPTH = 12
+
 
 def _paragraphs(raw: str | None) -> tuple[str, ...]:
     if not raw:
         return ()
-    return tuple(_PARA_RE.findall(raw))
+    labels = tuple(_PARA_RE.findall(raw))
+    if len(labels) > MAX_PARAGRAPH_DEPTH:
+        raise CitationError(
+            f"Too many paragraph levels ({len(labels)}); the CFR nests at most "
+            f"about six. Cite a specific paragraph like 101.9(c)(2)(i)."
+        )
+    return labels
 
 
 def _check_title(value: str) -> int:
