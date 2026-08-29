@@ -60,8 +60,8 @@ rather than passing today's date blindly.
 
 **Caching is courtesy.** The eCFR publishes no rate limit and has no key to identify
 callers politely, so the client caches to disk (historical dates forever, since
-point-in-time content is immutable) and self-limits concurrency. Set `CFR_MCP_CACHE_DIR`
-to relocate the cache.
+point-in-time content is immutable) and self-limits concurrency. The cache lives in
+`~/.cache/cfr-mcp` (respects `XDG_CACHE_HOME`); set `CFR_MCP_CACHE_DIR` to relocate it.
 
 ## Legal
 
