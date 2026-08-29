@@ -63,9 +63,24 @@ async def test_lookup_missing_paragraph_falls_back_to_section(
         text=fixture_text("section_21_101_9.xml")
     )
     out = await lookup_citation("21 CFR 101.9(z)(9)")
-    # Never fabricate: fall back to the section (capped → outline here).
-    assert "101.9" in out
+    # Never fabricate: say the paragraph is missing and list what exists.
+    assert "does not exist" in out
+    assert "(a)" in out and "(j)" in out  # 101.9 runs (a) through (j)
     assert len(out) < MAX_TOOL_OUTPUT
+
+
+@respx.mock(base_url=BASE_URL)
+async def test_lookup_oversized_paragraph_is_capped(respx_mock, fresh_client):
+    mock_titles(respx_mock)
+    respx_mock.get(url__regex=r".*/full/2026-08-27/title-21\.xml").respond(
+        text=fixture_text("section_21_101_9.xml")
+    )
+    # 101.9(c) alone is ~35k chars; the cap applies to every output.
+    out = await lookup_citation("21 CFR 101.9(c)")
+    assert len(out) < 15_000
+    assert "too large" in out
+    assert "Sub-paragraphs available" in out
+    assert "(1)" in out  # names the drill-down targets
 
 
 @respx.mock(base_url=BASE_URL)

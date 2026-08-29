@@ -189,14 +189,55 @@ def extract_paragraphs(text: str, paragraphs: tuple[str, ...]) -> str | None:
     return remaining.strip()
 
 
+def top_level_paragraphs(text: str) -> list[tuple[str, str]]:
+    """(label, snippet) for each top-level paragraph of a section's text.
+
+    Follows the successor chain from the first line-start marker — (a) then
+    (b) then (c)… — so nested markers like (1) or (ii) are never mistaken
+    for top-level ones.
+    """
+    first = re.search(r"^\((\w{1,4})\)", text, re.MULTILINE)
+    if not first:
+        return []
+
+    def snippet(start: int) -> str:
+        end = text.find("\n", start)
+        line = text[start:] if end == -1 else text[start:end]
+        return line[:90].rsplit(" ", 1)[0] if len(line) > 90 else line
+
+    labels = [(first.group(1), snippet(first.start()))]
+    pos = first.end()
+    while True:
+        for succ in _successors(labels[-1][0], depth=0):
+            nxt = _marker(succ).search(text, pos)
+            if nxt:
+                labels.append((succ, snippet(nxt.start())))
+                pos = nxt.end()
+                break
+        else:
+            return labels
+
+
 def render_capped(node: Node, max_chars: int = DEFAULT_MAX_CHARS) -> str:
     """Full text if it fits; otherwise an outline plus instructions."""
     if node.char_count <= max_chars:
         return node.render()
 
+    if node.children:
+        body = node.outline()
+        hint = "request a specific section to read the text"
+    else:
+        # A single huge section has no child DIVs; outline its paragraphs.
+        paras = top_level_paragraphs(node.text)
+        body = "\n".join(f"({label}) {snip}…" for label, snip in paras)
+        hint = (
+            f"request a specific paragraph, e.g. "
+            f"{node.number}({paras[0][0]})" if paras else "request a paragraph"
+        )
+
     return (
         f"{node.type.title()} {node.number} — {node.heading}\n\n"
         f"This is too large to return in full ({node.char_count:,} characters). "
-        f"Its structure is below; request a specific section to read the text.\n\n"
-        f"{node.outline()}"
+        f"Its structure is below; {hint}.\n\n"
+        f"{body}"
     )

@@ -17,7 +17,13 @@ from pydantic import Field
 from .cache import Cache
 from .citations import CitationError, parse
 from .client import ECFRClient, ECFRError
-from .xml_parse import DEFAULT_MAX_CHARS, extract_paragraphs, parse_xml, render_capped
+from .xml_parse import (
+    DEFAULT_MAX_CHARS,
+    extract_paragraphs,
+    parse_xml,
+    render_capped,
+    top_level_paragraphs,
+)
 
 mcp = MCPServer(
     "cfr",
@@ -87,11 +93,43 @@ async def lookup_citation(
         return f"No content found for {cit}."
 
     if cit.paragraphs:
+        trail = "".join(f"({p})" for p in cit.paragraphs)
         narrowed = extract_paragraphs(node.render(), cit.paragraphs)
         if narrowed:
-            trail = "".join(f"({p})" for p in cit.paragraphs)
-            return f"{cit.title} CFR {cit.section}{trail}\n\n{narrowed}{DISCLAIMER}"
-        # Fall through rather than silently returning the wrong paragraph.
+            if len(narrowed) <= max_chars:
+                return (
+                    f"{cit.title} CFR {cit.section}{trail}\n\n{narrowed}"
+                    f"{DISCLAIMER}"
+                )
+            # A paragraph like 101.9(c) can be 35k chars on its own; the cap
+            # applies to every output. Point at the sub-paragraphs instead.
+            body = narrowed.split("\n", 1)[1] if "\n" in narrowed else ""
+            subs = top_level_paragraphs(body)
+            if subs:
+                sub_list = ", ".join(f"({s})" for s, _ in subs[:30])
+                return (
+                    f"{cit.title} CFR {cit.section}{trail} is "
+                    f"{len(narrowed):,} characters — too large to return in "
+                    f"full. It begins:\n\n{narrowed[:max_chars // 4]}…\n\n"
+                    f"Sub-paragraphs available: {sub_list}. Request a deeper "
+                    f"citation like {cit.section}{trail}({subs[0][0]})"
+                    + DISCLAIMER
+                )
+            return (
+                f"{cit.title} CFR {cit.section}{trail}\n\n"
+                f"{narrowed[:max_chars]}\n\n[Truncated at {max_chars:,} of "
+                f"{len(narrowed):,} characters.]" + DISCLAIMER
+            )
+        # Never silently return the wrong paragraph: say it isn't there,
+        # list what is, and let the model re-ask.
+        paras = top_level_paragraphs(node.text)
+        available = ", ".join(f"({p})" for p, _ in paras)
+        return (
+            f"Paragraph {trail} does not exist in {cit.title} CFR "
+            f"{cit.section}. Top-level paragraphs present: "
+            f"{available or 'none (the section has no lettered paragraphs)'}. "
+            f"Request the whole section or one of those paragraphs."
+        )
 
     return render_capped(node, max_chars) + DISCLAIMER
 
@@ -180,7 +218,7 @@ async def where_does_term_appear(query: str, date: str | None = None) -> str:
         return found
 
     for b in buckets[:25]:
-        heading = b.get("heading") or ""
+        heading = _strip_html(b.get("heading") or "")
         lines.append(
             f"• {b.get('hierarchy_heading', '?')} — {heading}: "
             f"{b.get('count', '?')} hit(s)"
@@ -188,8 +226,8 @@ async def where_does_term_appear(query: str, date: str | None = None) -> str:
         top = sorted(parts_of(b), key=lambda p: -(p.get("count") or 0))[:3]
         for p in top:
             lines.append(
-                f"    {p.get('hierarchy_heading')} ({p.get('heading', '')}): "
-                f"{p.get('count')}"
+                f"    {p.get('hierarchy_heading')} "
+                f"({_strip_html(p.get('heading') or '')}): {p.get('count')}"
             )
     return "\n".join(lines)
 
@@ -310,7 +348,10 @@ async def list_agencies(filter: str | None = None) -> str:
             name = a.get("name", "")
             slug = a.get("slug", "")
             refs = a.get("cfr_references") or []
-            titles = sorted({str(r.get("title")) for r in refs if r.get("title")})
+            titles = [
+                str(t)
+                for t in sorted({int(r["title"]) for r in refs if r.get("title")})
+            ]
             if not needle or needle in name.lower() or needle in slug.lower():
                 loc = f" — Title(s) {', '.join(titles)}" if titles else ""
                 lines.append("  " * depth + f"{name} [{slug}]{loc}")
