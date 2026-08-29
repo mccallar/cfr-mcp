@@ -15,6 +15,12 @@ title 21 → 2026-08-27, title 40 → 2026-08-27.
    plus `date`, `name`, `part`, `subpart`, `title`, `type`
    (`section`|`appendix`), `substantive`, `removed`.
 
+1b. **Search filter params are also bare, not `conditions[...]`.**
+   `?conditions[hierarchy][title]=21` → 400 unpermitted parameter. Working,
+   verified live: `hierarchy[title]=21`,
+   `agency_slugs[]=food-and-drug-administration`, `date=2024-01-01`.
+   → Fix `search_regulations` in `server.py`.
+
 2. **Appendix param needs the full label, not the short identifier.**
    `?part=261&appendix=I` → 404. `?part=261&appendix=Appendix I to Part 261`
    → 200. Appendix identifiers in versions/structure use the same full-label

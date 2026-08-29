@@ -53,7 +53,12 @@ def test_subpart():
 def test_appendix_roman():
     c = parse("40 CFR Part 261, Appendix VIII")
     assert c.appendix == "VIII"
-    assert c.as_params() == {"part": "261", "appendix": "VIII"}
+    # The API keys appendices by full label — bare "VIII" 404s (see
+    # tests/fixtures/NOTES.md).
+    assert c.as_params() == {
+        "part": "261",
+        "appendix": "Appendix VIII to Part 261",
+    }
 
 
 def test_appendix_abbreviated():

@@ -48,7 +48,9 @@ class Citation:
         if self.section:
             params["section"] = self.section
         if self.appendix:
-            params["appendix"] = self.appendix
+            # The API keys appendices by their full label, e.g.
+            # "Appendix VIII to Part 261" — a bare "VIII" 404s.
+            params["appendix"] = f"Appendix {self.appendix} to Part {self.part}"
         return params
 
     @property

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
-from typing import Any
+from typing import Any, Self
 
 import httpx
 
@@ -77,7 +77,7 @@ class ECFRClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def __aenter__(self) -> "ECFRClient":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -155,7 +155,8 @@ class ECFRClient:
             parsed = dt.date.fromisoformat(date)
         except ValueError as exc:
             raise ECFRError(f"Date must be YYYY-MM-DD, got {date!r}") from exc
-        return date, parsed < dt.date.today() - dt.timedelta(days=1)
+        today = dt.datetime.now(tz=dt.UTC).date()
+        return date, parsed < today - dt.timedelta(days=1)
 
     # ---------------- public surface ----------------
 

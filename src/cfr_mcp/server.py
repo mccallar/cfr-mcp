@@ -7,9 +7,11 @@ the current official CFR, the daily Federal Register, and the LSA.
 
 from __future__ import annotations
 
+import html
+import re
 from typing import Annotated, Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from .cache import Cache
@@ -17,7 +19,13 @@ from .citations import CitationError, parse
 from .client import ECFRClient, ECFRError
 from .xml_parse import DEFAULT_MAX_CHARS, extract_paragraphs, parse_xml, render_capped
 
-mcp = FastMCP("cfr")
+mcp = MCPServer(
+    "cfr",
+    instructions=(
+        "Retrieval of US Code of Federal Regulations text via the eCFR API. "
+        "Retrieval only: no compliance judgment or legal advice."
+    ),
+)
 _client: ECFRClient | None = None
 
 
@@ -32,6 +40,13 @@ DISCLAIMER = (
     "\n\n---\nSource: eCFR (authoritative but unofficial). For legal research, "
     "verify against the official CFR, the daily Federal Register, and the LSA."
 )
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str) -> str:
+    """Search responses embed <strong> and ellipsis spans in excerpts/headings."""
+    return html.unescape(_TAG_RE.sub("", text))
 
 
 @mcp.tool()
@@ -96,11 +111,11 @@ async def search_regulations(
     """
     params: dict[str, Any] = {"per_page": min(limit, 20)}
     if title:
-        params["conditions[hierarchy][title]"] = title
+        params["hierarchy[title]"] = title
     if agency:
-        params["conditions[agency_slugs][]"] = agency
+        params["agency_slugs[]"] = agency
     if date:
-        params["conditions[date]"] = date
+        params["date"] = date
 
     try:
         data = await client().search(query, **params)
@@ -114,11 +129,22 @@ async def search_regulations(
     total = data.get("meta", {}).get("total_count", len(results))
     lines = [f"{total} result(s) for {query!r}; showing {len(results)}:", ""]
     for r in results:
-        h = r.get("hierarchy_headings") or {}
-        cite = r.get("hierarchy", {})
-        label = f"{cite.get('title', '?')} CFR {cite.get('section') or 'Part ' + str(cite.get('part', '?'))}"
-        heading = h.get("section") or h.get("part") or ""
-        snippet = " ".join((r.get("full_text_excerpt") or "").split())[:280]
+        cite = r.get("hierarchy") or {}
+        headings = r.get("headings") or {}
+        if cite.get("section"):
+            label = f"{cite.get('title', '?')} CFR {cite['section']}"
+        elif cite.get("appendix"):
+            label = f"{cite.get('title', '?')} CFR {cite['appendix']}"
+        elif cite.get("part"):
+            label = f"{cite.get('title', '?')} CFR Part {cite['part']}"
+        else:
+            label = f"Title {cite.get('title', '?')} CFR"
+        heading = _strip_html(
+            headings.get("section") or headings.get("appendix")
+            or headings.get("part") or ""
+        )
+        snippet = _strip_html(r.get("full_text_excerpt") or "")
+        snippet = " ".join(snippet.split())[:280]
         lines.append(f"• {label} — {heading}\n  {snippet}")
     return "\n".join(lines) + DISCLAIMER
 
@@ -137,12 +163,34 @@ async def where_does_term_appear(query: str, date: str | None = None) -> str:
     except ECFRError as exc:
         return f"Lookup failed: {exc}"
 
-    buckets = data.get("children") or data.get("counts") or []
+    buckets = data.get("children") or []
     if not buckets:
         return f"No hierarchy counts for {query!r}."
+
     lines = [f"Where {query!r} appears in the CFR:", ""]
+
+    def parts_of(node: dict) -> list[dict]:
+        """Collect part-level descendants (children nest title→chapter→part)."""
+        found: list[dict] = []
+        for child in node.get("children") or []:
+            if child.get("level") == "part" and child.get("hierarchy_heading"):
+                found.append(child)
+            else:
+                found.extend(parts_of(child))
+        return found
+
     for b in buckets[:25]:
-        lines.append(f"• Title {b.get('name', '?')}: {b.get('count', '?')} hit(s)")
+        heading = b.get("heading") or ""
+        lines.append(
+            f"• {b.get('hierarchy_heading', '?')} — {heading}: "
+            f"{b.get('count', '?')} hit(s)"
+        )
+        top = sorted(parts_of(b), key=lambda p: -(p.get("count") or 0))[:3]
+        for p in top:
+            lines.append(
+                f"    {p.get('hierarchy_heading')} ({p.get('heading', '')}): "
+                f"{p.get('count')}"
+            )
     return "\n".join(lines)
 
 
@@ -196,9 +244,9 @@ async def what_changed(
 
     params: dict[str, Any] = {}
     if cit.part:
-        params["conditions[part]"] = cit.part
+        params["part"] = cit.part
     if since:
-        params["conditions[issue_date][gte]"] = since
+        params["issue_date[gte]"] = since
 
     try:
         data = await client().versions(cit.title, params)
@@ -219,16 +267,26 @@ async def what_changed(
             f"(issue {v.get('issue_date', '?')}) {v.get('name', '')}".rstrip()
         )
 
+    def touches_part(correction: dict) -> bool:
+        refs = correction.get("cfr_references") or []
+        return any(
+            str((r.get("hierarchy") or {}).get("part")) == str(cit.part)
+            for r in refs
+        )
+
     relevant = [
-        c
-        for c in (corrections.get("ecfr_corrections") or [])
-        if cit.part and str(cit.part) in str(c.get("cfr_references", ""))
+        c for c in (corrections.get("ecfr_corrections") or [])
+        if cit.part and touches_part(c)
     ]
     if relevant:
         lines += ["", "Published corrections:"]
         for c in relevant[:10]:
+            refs = ", ".join(
+                r.get("cfr_reference", "") for r in c.get("cfr_references") or []
+            )
             lines.append(
-                f"• {c.get('error_corrected', '?')}: {c.get('corrective_action', '')}"
+                f"• {c.get('error_corrected', '?')} ({refs}): "
+                f"{c.get('corrective_action', '')} [{c.get('fr_citation', '')}]"
             )
     return "\n".join(lines) + DISCLAIMER
 

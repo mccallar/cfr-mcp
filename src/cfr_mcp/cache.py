@@ -46,9 +46,11 @@ class Cache:
             meta = json.loads(meta_path.read_text())
         except (json.JSONDecodeError, OSError):
             return None
-        if not meta.get("immutable"):
-            if time.time() - meta.get("stored_at", 0) > self.ttl:
-                return None
+        if (
+            not meta.get("immutable")
+            and time.time() - meta.get("stored_at", 0) > self.ttl
+        ):
+            return None
         try:
             return body_path.read_text(encoding="utf-8")
         except OSError:
