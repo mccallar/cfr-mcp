@@ -98,3 +98,27 @@ All five have regression tests in `tests/`.
 - `lookup_citation("40 CFR Part 261")` (mid-size, 1.5M chars of text,
   ~6 MB XML): 1.7s, degraded to an 8,009-char subpart/section outline with
   per-node sizes. ✅
+
+## v0.2 live verification (2026-08-29)
+
+- `what_changed("40 CFR 261.4", since="2023-01-01")`: 3,748 chars. Every
+  amendment line now tagged with the FR rule behind it (effective-date match
+  preferred, publication-date fallback — both verified on real data), and a
+  deduped "Federal Register rules behind these amendments" block with
+  publication/effective dates and rulemaking URLs. Matching validated 9/9
+  against hand-checked FR data for this part. FR API failure degrades to
+  plain history with an explicit "(cross-links unavailable)" note (tested
+  via mock, 404). ✅
+- `compare_versions("40 CFR 261.4", "2023-12-06", "2023-12-07")`: 7,414
+  chars. First run refused the section outright — the input guard was 100k
+  and 261.4 renders at 100,365 chars; raised to 500k (guards whole parts,
+  admits every real section). Second run drowned real changes in
+  whitespace-only table noise (the eCFR renders the same table with
+  different internal whitespace on different dates); fixed by normalizing
+  whitespace per paragraph unit before diffing. Final output shows exactly
+  the substantive changes of the 88 FR 84710 technical corrections:
+  amendment-note removals, the Acknowledgement→Acknowledgment spelling fix,
+  and the rewritten (a)(25)(vi)-(vii) EEI filing requirements. ✅
+- `compare_versions("40 CFR Part 261", …)`: refused at 1,483,414 chars with
+  guidance to compare a section. `compare_versions("40 CFR 261.4(a)", …)`:
+  paragraph narrowing works in the diff path too. ✅

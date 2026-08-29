@@ -7,6 +7,8 @@ the current official CFR, the daily Federal Register, and the LSA.
 
 from __future__ import annotations
 
+import datetime as _dt
+import difflib
 import html
 import re
 from typing import Annotated, Any
@@ -283,8 +285,9 @@ async def what_changed(
 ) -> str:
     """List amendment dates for a citation, plus any published corrections.
 
-    This is the capability no other CFR tool offers: answering "has this rule
-    changed since we wrote our procedure?"
+    Each amendment is cross-linked to the Federal Register rule that caused
+    it, with a URL to the rulemaking (whose preamble explains the why).
+    Follow up with compare_versions to see exactly what text changed.
     """
     try:
         cit = parse(citation)
@@ -306,15 +309,68 @@ async def what_changed(
     versions = data.get("content_versions", [])
     if cit.section:
         versions = [v for v in versions if v.get("identifier") == cit.section]
+    shown = versions[:40]
+
+    # Which Federal Register rule caused each amendment? The eCFR stamps an
+    # amendment with either the rule's effective date or (for rules effective
+    # on publication) its publication date, so index FR final rules for this
+    # part by both and match locally. Best effort: history renders without
+    # links if the FR API is unreachable.
+    fr_by_date: dict[str, list[dict]] = {}
+    fr_note = ""
+    if cit.part and shown:
+        dates = [v.get("amendment_date") for v in shown if v.get("amendment_date")]
+        try:
+            # Rules publish up to several months before they take effect.
+            window = (
+                _dt.date.fromisoformat(min(dates)) - _dt.timedelta(days=400)
+            ).isoformat()
+            fr = await client().federal_register_rules(cit.title, cit.part, window)
+        except (ECFRError, ValueError) as exc:
+            fr_note = f"(Federal Register cross-links unavailable: {exc})"
+        else:
+            docs = fr.get("results") or []
+            if fr.get("count", 0) > len(docs):
+                fr_note = (
+                    f"(Cross-links cover the {len(docs)} most relevant of "
+                    f"{fr['count']} Federal Register rules for this part; "
+                    "some amendments may lack links.)"
+                )
+            for doc in docs:
+                for k in ("effective_on", "publication_date"):
+                    if doc.get(k):
+                        fr_by_date.setdefault(doc[k], []).append(doc)
+
+    def rules_for(date: str | None) -> list[dict]:
+        candidates = fr_by_date.get(date or "", [])
+        effective = [d for d in candidates if d.get("effective_on") == date]
+        return effective or candidates
 
     lines = [f"Amendment history for {cit}:", ""]
-    if not versions:
+    if not shown:
         lines.append("No amendments found in that window.")
-    for v in versions[:40]:
+    cited: dict[str, dict] = {}
+    for v in shown:
+        matched = rules_for(v.get("amendment_date"))
+        for d in matched:
+            cited.setdefault(d.get("citation") or "?", d)
+        tag = f" [{', '.join(d.get('citation') or '?' for d in matched)}]" if matched else ""
         lines.append(
             f"• {v.get('amendment_date', '?')} — {v.get('identifier', '')} "
             f"(issue {v.get('issue_date', '?')}) {v.get('name', '')}".rstrip()
+            + tag
         )
+    if cited:
+        lines += ["", "Federal Register rules behind these amendments:"]
+        for citation_no, d in cited.items():
+            lines.append(
+                f"• {citation_no} — {d.get('title', '')} "
+                f"(published {d.get('publication_date', '?')}, "
+                f"effective {d.get('effective_on') or 'on publication'})\n"
+                f"  {d.get('html_url', '')}"
+            )
+    if fr_note:
+        lines += ["", fr_note]
 
     def touches_part(correction: dict) -> bool:
         refs = correction.get("cfr_references") or []
@@ -338,6 +394,100 @@ async def what_changed(
                 f"{c.get('corrective_action', '')} [{c.get('fr_citation', '')}]"
             )
     return "\n".join(lines) + DISCLAIMER
+
+
+@mcp.tool()
+async def compare_versions(
+    citation: Annotated[
+        str, Field(description="A section citation like '40 CFR 261.4', "
+                               "optionally with a paragraph: '40 CFR 261.4(b)'")
+    ],
+    date_a: Annotated[str, Field(description="Earlier date, YYYY-MM-DD")],
+    date_b: Annotated[
+        str | None,
+        Field(description="Later date, YYYY-MM-DD. Omit for the current text."),
+    ] = None,
+    max_chars: int = DEFAULT_MAX_CHARS,
+) -> str:
+    """Show how a citation's text differs between two dates, as a diff.
+
+    Use what_changed first to find amendment dates worth comparing; pass the
+    day before an amendment as date_a and the amendment date as date_b to see
+    exactly what that rule changed. Both dates must be 2017-01-03 or later.
+    """
+    try:
+        cit = parse(citation)
+    except CitationError as exc:
+        return f"Could not parse that citation. {exc}"
+    if cit.is_title_only:
+        return (
+            f"'{citation}' names a whole CFR title — too large to diff. "
+            "Compare a section, or use what_changed to find amendments."
+        )
+
+    async def text_at(date: str | None) -> str:
+        xml = await client().full_xml(cit, date)
+        node = parse_xml(xml)
+        if node is None:
+            raise ECFRError(f"no content found for {cit} on {date or 'the current date'}")
+        # Guard against diffing a whole large part; single sections (the
+        # biggest run ~120k rendered chars) always fit. Output is capped
+        # separately, so input size only costs compute.
+        if node.char_count > 500_000:
+            raise ECFRError(
+                f"{cit} is {node.char_count:,} characters on "
+                f"{date or 'the current date'} — too large to diff. "
+                "Compare a single section, or narrow to a paragraph."
+            )
+        rendered = node.render()
+        if cit.paragraphs:
+            narrowed = extract_paragraphs(rendered, cit.paragraphs)
+            if narrowed is None:
+                trail = "".join(f"({p})" for p in cit.paragraphs)
+                raise ECFRError(
+                    f"paragraph {trail} does not exist in the "
+                    f"{date or 'current'} version. Compare the whole section "
+                    "to see paragraphs added or removed."
+                )
+            return narrowed
+        return rendered
+
+    try:
+        old, new = await text_at(date_a), await text_at(date_b)
+    except ECFRError as exc:
+        return f"Could not compare versions: {exc}"
+
+    # Diff paragraph units with whitespace normalized away: the eCFR renders
+    # the same table with different internal whitespace on different dates,
+    # and that noise would otherwise drown the real changes.
+    def units(text: str) -> list[str]:
+        return [" ".join(p.split()) for p in text.split("\n\n") if p.strip()]
+
+    old_units, new_units = units(old), units(new)
+    label_b = date_b or "current"
+    if old_units == new_units:
+        return (
+            f"No textual difference in {cit} between {date_a} and {label_b}. "
+            "(Amendments listed by what_changed may affect other sections of "
+            "the same part.)"
+        )
+
+    # Each unit is one whole paragraph, so a change shows the full affected
+    # paragraph rather than character noise.
+    diff = "\n".join(
+        difflib.unified_diff(
+            old_units, new_units,
+            fromfile=f"{cit} @ {date_a}", tofile=f"{cit} @ {label_b}",
+            lineterm="", n=1,
+        )
+    )
+    if len(diff) > max_chars:
+        diff = (
+            diff[:max_chars]
+            + f"\n\n[Diff truncated at {max_chars:,} of {len(diff):,} "
+            "characters. Narrow to a paragraph to see the rest.]"
+        )
+    return diff + DISCLAIMER
 
 
 @mcp.tool()

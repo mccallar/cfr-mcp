@@ -8,9 +8,10 @@ raw HTML or stack traces to the model.
 import respx
 from conftest import fixture_text
 
-from cfr_mcp.client import BASE_URL
+from cfr_mcp.client import BASE_URL, FR_DOCUMENTS_URL
 from cfr_mcp.server import (
     browse_structure,
+    compare_versions,
     list_agencies,
     lookup_citation,
     search_regulations,
@@ -188,6 +189,7 @@ async def test_what_changed_filters_and_renders(respx_mock, fresh_client):
     respx_mock.get(url__regex=r".*/corrections/title/1\.json").respond(
         text=fixture_text("corrections.json")
     )
+    respx_mock.get(FR_DOCUMENTS_URL).respond(json={"count": 0, "results": []})
     out = await what_changed("1 CFR 2.2", since="2020-01-01")
     params = versions_route.calls.last.request.url.params
     assert params["part"] == "2"
@@ -242,7 +244,7 @@ async def test_api_error_returned_as_string(respx_mock, fresh_client):
     assert "valid issue date" in out  # self-correction hint for the model
 
 
-async def test_all_six_tools_are_registered():
+async def test_all_seven_tools_are_registered():
     from cfr_mcp.server import mcp
 
     tools = await mcp.list_tools()
@@ -253,5 +255,96 @@ async def test_all_six_tools_are_registered():
         "where_does_term_appear",
         "browse_structure",
         "what_changed",
+        "compare_versions",
         "list_agencies",
     }
+
+
+VERSIONS_40_261 = {
+    "content_versions": [
+        # amendment_date == a rule's effective_on in the FR fixture
+        {"amendment_date": "2023-12-07", "issue_date": "2023-12-07",
+         "identifier": "261.4", "name": "§ 261.4 Exclusions.", "part": "261"},
+        # amendment_date == a rule's publication_date (effective on publication)
+        {"amendment_date": "2023-08-09", "issue_date": "2023-08-09",
+         "identifier": "261.4", "name": "§ 261.4 Exclusions.", "part": "261"},
+        # no matching rule at all
+        {"amendment_date": "2021-03-15", "issue_date": "2021-03-15",
+         "identifier": "261.4", "name": "§ 261.4 Exclusions.", "part": "261"},
+    ]
+}
+
+
+@respx.mock(base_url=BASE_URL)
+async def test_what_changed_links_federal_register_rules(respx_mock, fresh_client):
+    respx_mock.get(url__regex=r".*/versions/title-40\.json").respond(
+        json=VERSIONS_40_261
+    )
+    respx_mock.get(url__regex=r".*/corrections/title/40\.json").respond(
+        json={"ecfr_corrections": []}
+    )
+    fr_route = respx_mock.get(FR_DOCUMENTS_URL).respond(
+        text=fixture_text("fr_documents_40_261.json")
+    )
+    out = await what_changed("40 CFR 261.4")
+    # Effective-date match tagged on the amendment line…
+    assert "2023-12-07" in out and "88 FR 84710" in out
+    # …publication-date fallback works too…
+    assert "88 FR 54086" in out
+    # …and each cited rule appears once with its rulemaking URL.
+    assert "Federal Register rules behind these amendments:" in out
+    assert "https://www.federalregister.gov/documents/" in out
+    # The FR query window opens well before the earliest amendment shown.
+    params = fr_route.calls.last.request.url.params
+    assert params["conditions[publication_date][gte]"] < "2021-03-15"
+    assert len(out) < MAX_TOOL_OUTPUT
+
+
+@respx.mock(base_url=BASE_URL)
+async def test_what_changed_survives_fr_api_failure(respx_mock, fresh_client):
+    respx_mock.get(url__regex=r".*/versions/title-40\.json").respond(
+        json=VERSIONS_40_261
+    )
+    respx_mock.get(url__regex=r".*/corrections/title/40\.json").respond(
+        json={"ecfr_corrections": []}
+    )
+    respx_mock.get(FR_DOCUMENTS_URL).respond(404)
+    out = await what_changed("40 CFR 261.4")
+    # History still renders; the missing links are stated, not hidden.
+    assert "2023-12-07" in out
+    assert "cross-links unavailable" in out
+
+
+OLD_2_6 = fixture_text("section_1_2_6.xml")
+NEW_2_6 = OLD_2_6.replace(
+    "Any person may reproduce", "Any person or agency may reproduce"
+)
+
+
+@respx.mock(base_url=BASE_URL)
+async def test_compare_versions_shows_changed_paragraphs(respx_mock, fresh_client):
+    respx_mock.get(url__regex=r".*/full/2023-06-01/title-1\.xml").respond(
+        text=OLD_2_6
+    )
+    respx_mock.get(url__regex=r".*/full/2024-06-01/title-1\.xml").respond(
+        text=NEW_2_6
+    )
+    out = await compare_versions("1 CFR 2.6", "2023-06-01", "2024-06-01")
+    assert "-" in out and "+" in out
+    assert "Any person may reproduce" in out  # removed side
+    assert "or agency" in out  # added side
+    assert "1 CFR 2.6 @ 2023-06-01" in out
+    assert "Source: eCFR" in out
+    assert len(out) < MAX_TOOL_OUTPUT
+
+
+@respx.mock(base_url=BASE_URL)
+async def test_compare_versions_identical_text(respx_mock, fresh_client):
+    respx_mock.get(url__regex=r".*/full/.*title-1\.xml").respond(text=OLD_2_6)
+    out = await compare_versions("1 CFR 2.6", "2023-06-01", "2024-06-01")
+    assert "No textual difference" in out
+
+
+async def test_compare_versions_title_only_refused(fresh_client):
+    out = await compare_versions("Title 40", "2023-06-01", "2024-06-01")
+    assert "too large to diff" in out

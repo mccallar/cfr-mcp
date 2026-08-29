@@ -19,8 +19,12 @@ from .citations import Citation
 
 BASE_URL = "https://www.ecfr.gov"
 
+# The Federal Register's own API — used only to answer "which rule caused
+# this amendment". Same terms as the eCFR: public, no key.
+FR_DOCUMENTS_URL = "https://www.federalregister.gov/api/v1/documents.json"
+
 USER_AGENT = (
-    "cfr-mcp/0.1 (+https://github.com/mccallar/cfr-mcp) "
+    "cfr-mcp/0.2 (+https://github.com/mccallar/cfr-mcp) "
     "unofficial MCP server; contact: https://github.com/mccallar/cfr-mcp/issues"
 )
 
@@ -260,3 +264,24 @@ class ECFRClient:
         return await self._get_json(
             ENDPOINTS["counts_daily"], {"query": query, **params}
         )
+
+    async def federal_register_rules(
+        self, title: int, part: str, published_since: str
+    ) -> Any:
+        """Final rules affecting a CFR title+part, from the Federal Register API.
+
+        An absolute URL bypasses the client's eCFR base_url; caching and the
+        concurrency cap apply as usual.
+        """
+        params: dict[str, Any] = {
+            "conditions[cfr][title]": title,
+            "conditions[cfr][part]": part,
+            "conditions[type][]": "RULE",
+            "conditions[publication_date][gte]": published_since,
+            "per_page": 100,
+            "fields[]": [
+                "citation", "title", "publication_date", "effective_on",
+                "html_url",
+            ],
+        }
+        return await self._get_json(FR_DOCUMENTS_URL, params)

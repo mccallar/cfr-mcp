@@ -13,7 +13,7 @@ Federal Register, NARA, or GPO, and uses no government seals or logos.
 
 ## Install
 
-Requires Python 3.11+. No API key — the eCFR API is open.
+Requires Python 3.11+. No API key — the eCFR and Federal Register APIs are open.
 
 Claude Code:
 
@@ -42,7 +42,8 @@ Any other MCP client:
 | `search_regulations` | Full-text search; returns citations and snippets, never bodies |
 | `where_does_term_appear` | Which titles contain a term, with hit counts. Fetches no text |
 | `browse_structure` | The hierarchy of a title or part, no text |
-| `what_changed` | Amendment history and published corrections for a citation |
+| `what_changed` | Amendment history for a citation, linking each change to the Federal Register rule that caused it, plus published corrections |
+| `compare_versions` | Diff of a citation's text between two dates — see exactly what an amendment changed |
 | `list_agencies` | Maps agency names to the CFR titles they administer |
 
 Point-in-time works throughout: pass `date` as `YYYY-MM-DD` to read the CFR as it stood.
